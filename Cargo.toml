@@ -1,0 +1,24 @@
+[package]
+name = "obj_viewer"
+version = "0.1.0"
+authors = ["anohterhollow1125 <anotherhollow1125@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+image = "0.23.11"
+winit = "0.23.0"
+cgmath = "0.17.0"
+env_logger = "0.8.2"
+wgpu = "0.6.0"
+futures = "0.3.8"
+bytemuck = "1.4.1"
+anyhow = "1.0"
+tobj = "2.0.2"
+
+[build-dependencies]
+anyhow = "1.0"
+fs_extra = "1.2.0"
+glob = "0.3.0"
+shaderc = "0.7.0"
