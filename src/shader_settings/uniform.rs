@@ -1,6 +1,6 @@
 use cgmath::prelude::*;
 use wgpu::util::DeviceExt;
-use crate::shader_settings::camera::Camera;
+use crate::shader_settings::camera::{Camera, Projection};
 
 // uniformの設定
 #[repr(C)]
@@ -25,9 +25,9 @@ impl Uniforms {
     }
 
     // 視点変更時に呼び出す必要がありそう
-    pub fn update_view_proj(&mut self, camera: &Camera) {
-        self.view_position = camera.eye.to_homogeneous();
-        self.view_proj = camera.build_view_projection_matrix();
+    pub fn update_view_proj(&mut self, camera: &Camera, projection: &Projection) {
+        self.view_position = camera.position.to_homogeneous();
+        self.view_proj = projection.calc_matrix() * camera.calc_matrix();
     }
 }
 

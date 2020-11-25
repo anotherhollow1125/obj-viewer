@@ -10,33 +10,112 @@ pub struct Light {
     pub id: usize,
     pub position: cgmath::Vector3<f32>,
     pub color: cgmath::Vector3<f32>,
+    pub intensity: f32,
+    pub radius: f32,
+    pub is_spotlight: bool,
+    pub limitcos_inner: f32,
+    pub limitcos_outer: f32,
+    pub limitdir: cgmath::Vector3<f32>,
 }
 
 impl Light {
+    pub fn new(
+        id: usize,
+        position: cgmath::Vector3<f32>,
+        color: cgmath::Vector3<f32>,
+        intensity: f32,
+        radius: f32,
+    ) -> Self {
+        Self {
+            id, position, color,
+            intensity,
+            radius,
+            is_spotlight: false,
+            limitcos_inner: 0.9,
+            limitcos_outer: 0.1,
+            limitdir: (0.0, 0.0, 0.0).into(),
+        }
+    }
+
+    pub fn new_spotlight(
+        id: usize,
+        position: cgmath::Vector3<f32>,
+        color: cgmath::Vector3<f32>,
+        intensity: f32,
+        radius: f32,
+        limitcos_inner: f32,
+        limitcos_outer: f32,
+        limitdir: cgmath::Vector3<f32>,
+    ) -> Self {
+        Self {
+            id, position, color,
+            intensity,
+            radius,
+            is_spotlight: true,
+            limitcos_inner,
+            limitcos_outer,
+            limitdir,
+        }
+    }
+
     pub fn to_raw(&self) -> LightRaw {
         LightRaw {
             position: self.position,
             _p1: 0,
             color: self.color,
+            intensity: self.intensity,
+            radius: self.radius,
+            is_spotlight: if self.is_spotlight { 1 } else { 0 },
+            limitcos_inner: self.limitcos_inner,
+            limitcos_outer: self.limitcos_outer,
+            limitdir: self.limitdir,
             _p2: 0,
         }
+    }
+}
+
+use std::cmp::{PartialEq, Eq, Ordering, Ord, PartialOrd};
+use std::hash::{Hash, Hasher};
+
+impl PartialEq for Light {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Eq for Light {}
+
+impl Hash for Light {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl Ord for Light {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
+impl PartialOrd for Light {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct LightRaw {
-    pub position: cgmath::Vector3<f32>,
+    position: cgmath::Vector3<f32>,
     _p1: u32, // 16 byte dummy data ... u32 ...? (size_of(u32) == 4 byte)
-    // => I got it. 16 byte == size_of(Vec4<f32>) and 1 word (this mean use one line of memory address.). so this u32 is important.
-    pub color: cgmath::Vector3<f32>,
-    _p2: u32,
-    // skip now.
-    /*
+    // => I got it. 16 byte == size_of(Vec4<f32>) and it is 1 set. so this u32 is important.
+    color: cgmath::Vector3<f32>,
+    intensity: f32,
+    radius: f32,
     is_spotlight: u32,
     limitcos_inner: f32,
     limitcos_outer: f32,
-    */
+    limitdir: cgmath::Vector3<f32>,
+    _p2: u32,
 }
 
 unsafe impl bytemuck::Zeroable for LightRaw {}

@@ -89,6 +89,7 @@ pub struct MaterialUniform {
     diffuse_color: cgmath::Vector3<f32>,
     _p3: u32,
     specular_color: cgmath::Vector3<f32>,
+    _p4: u32,
 }
 
 unsafe impl bytemuck::Pod for MaterialUniform {}
@@ -139,6 +140,7 @@ impl Model {
                 diffuse_color: mat.diffuse.into(),
                 _p3: 0,
                 specular_color: mat.specular.into(),
+                _p4: 0,
             };
             let matuni_buffer = device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
@@ -201,7 +203,7 @@ impl Model {
                         ],
                         tex_coords: [
                             m.mesh.texcoords[i * 2    ],
-                            m.mesh.texcoords[i * 2 + 1],
+                            1.0-m.mesh.texcoords[i * 2 + 1],
                         ],
                         normal: [
                             m.mesh.normals[i * 3    ],
@@ -366,11 +368,25 @@ use std::rc::Rc;
 
 // 拡大 -> 回転 -> 移動
 pub struct Instance {
-    id: usize,
+    pub name: String,
+    index: usize,
     model: Rc<Model>,
     pub position: Vector3<f32>,
     pub rotation: Quaternion<f32>,
     pub scale: f32,
+}
+
+impl PartialEq for Instance {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+impl Eq for Instance {}
+
+impl Hash for Instance {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
 }
 
 #[repr(C)]
@@ -400,12 +416,14 @@ impl Instance {
 impl Model {
     pub fn instantiate(
         model: Rc<Model>,
+        name: String,
         position: Vector3<f32>,
         rotation: Quaternion<f32>,
         scale: f32,
     ) -> Instance {
         Instance {
-            id: 0,
+            name,
+            index: 0,
             model,
             position,
             rotation,
@@ -458,7 +476,7 @@ impl InstanceSetting {
             let initial_data = sorted.into_iter()
                 .enumerate()
                 .map(|(i, ins)| {
-                    ins.id = i;
+                    ins.index = i;
                     ins.to_raw()
                 }).collect::<Vec<_>>();
 
@@ -504,7 +522,7 @@ impl InstanceSetting {
     ) -> Result<()> {
         let raw = instance.to_raw();
         let ref buffer = (self.group_book.get(&instance.model).context("Invalid Instance")?).buffer;
-        let offset = instance.id * std::mem::size_of::<InstanceRaw>();
+        let offset = instance.index * std::mem::size_of::<InstanceRaw>();
         queue.write_buffer(buffer, offset as u64, bytemuck::cast_slice(&[raw]));
 
         Ok(())

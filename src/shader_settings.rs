@@ -1,57 +1,64 @@
-mod camera;
+pub mod camera;
 use camera::*;
-mod uniform;
+pub mod uniform;
 use uniform::*;
-mod texture;
+pub mod texture;
 use texture::*;
-mod model;
+pub mod model;
 use model::*;
-mod light;
+pub mod light;
 use light::*;
 
+#[allow(unused_imports)]
 use cgmath::prelude::*;
 use anyhow::*;
 use winit::{
     event::*,
     window::Window,
 };
+
+use std::collections::HashMap;
 use std::rc::Rc;
+use std::cell::RefCell;
 
 pub struct ShaderState {
     w_size: winit::dpi::PhysicalSize<u32>,
     surface: wgpu::Surface,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    pub queue: wgpu::Queue,
     sc_desc: wgpu::SwapChainDescriptor,
     swap_chain: wgpu::SwapChain,
 
     depth_texture: Texture,
 
-    camera: Camera,
-    camera_controller: CameraController,
+    camera_setting: CameraSetting,
 
     uniform_setting: UniformSetting,
 
-    #[allow(dead_code)]
-    instance: Instance,
-    instance_2: Instance,
-    instance_setting: InstanceSetting,
-
-    lights: Vec<Light>,
-    light_setting: LightSetting,
-
-    light_instance_setting: InstanceSetting,
-    light_instance_1: Instance,
-    #[allow(dead_code)]
-    light_instance_2: Instance,
+    pub instance_setting: InstanceSetting,
+    pub light_setting: LightSetting,
+    pub light_instance_setting: InstanceSetting,
 
     render_pipeline: wgpu::RenderPipeline,
     light_render_pipeline: wgpu::RenderPipeline,
+
+    pub instance_book: HashMap<String, Rc<RefCell<Instance>>>,
+    pub light_book: Vec<Rc<RefCell<Light>>>,
 }
 
 impl ShaderState {
     // Creating some of the wgpu types requires async code
-    pub async fn new(window: &Window) -> Result<Self> {
+    pub async fn new<F>(
+        window: &Window,
+        f: F
+    ) -> Result<Self>
+    where
+        F: Fn(
+            &wgpu::Device,
+            &wgpu::Queue,
+            &wgpu::BindGroupLayout,
+        ) -> Result<(Vec<Instance>, Vec<Light>, Vec<Instance>)>
+    {
         let w_size = window.inner_size();
 
         // The instance is a handle to our GPU
@@ -86,68 +93,25 @@ impl ShaderState {
         let texture_setting = texture::TextureSetting::new(&device);
         let depth_texture = texture::Texture::create_depth_texture(&device, &sc_desc, "depth_texture");
 
-        let camera = Camera {
-            // eye: (0.0, 1.0, 2.0).into(),
-            eye: (0.0, 15.0, 32.0).into(),
-            target: (0.0, 0.0, 0.0).into(),
-            up: cgmath::Vector3::unit_y(),
-            aspect: sc_desc.width as f32 / sc_desc.height as f32,
-            fovy: 45.0,
-            znear: 0.1,
-            zfar: 100.0,
-        };
+        let camera_setting = CameraSetting::new(sc_desc.width, sc_desc.height);
 
-        let lights = vec![
-            Light {
-                id: 0,
-                position: (2.0, 2.0, 0.0).into(),
-                color: (1.0, 1.0, 1.0).into(),
-            },
-            Light {
-                id: 1,
-                position: (0.0, 5.0, 0.0).into(),
-                color: (1.0, 0.0, 0.0).into(),
-            },
-        ];
+        let (
+            mut instances,
+            lights,
+            mut light_instances
+        ) = f(&device, &queue, &texture_setting.layout)?;
 
         let mut uniform_setting = uniform::UniformSetting::new(&device, lights.len() as u32);
-        uniform_setting.uniforms.update_view_proj(&camera);
-
-        let assets_dir = std::path::Path::new(env!("OUT_DIR")).join("assets");
-        let mdel = model::Model::load(
-            0,
-            &device,
-            &queue,
-            &texture_setting.layout,
-            assets_dir.join("dice2.obj"),
-        )?;
-        let mdel = Rc::new(mdel);
-
-        let mut instance = Model::instantiate(
-            mdel.clone(),
-            (1.0, 0.0, 0.0).into(),
-            cgmath::Quaternion::from_axis_angle(
-                cgmath::Vector3::unit_z(),
-                cgmath::Deg(0.0)
-            ),
-            1.0
+        uniform_setting.uniforms.update_view_proj(
+            &camera_setting.camera,
+            &camera_setting.projection,
         );
 
-        let mut instance_2 = Model::instantiate(
-            mdel.clone(),
-            (-1.0, 0.0, 0.0).into(),
-            cgmath::Quaternion::from_axis_angle(
-                cgmath::Vector3::unit_z(),
-                cgmath::Deg(0.0)
-            ),
-            0.7
-        );
-
-        let mut ins_vec = vec![&mut instance, &mut instance_2];
+        let mut ins_vec = instances.iter_mut().collect::<Vec<_>>();
         let instance_setting = InstanceSetting::new(&device, &mut ins_vec);
-
-        let t = lights.iter().collect::<Vec<_>>();
-        let light_setting = LightSetting::new(&device, &t);
+        let lig_vec = lights.iter().collect::<Vec<_>>();
+        let light_setting = LightSetting::new(&device, &lig_vec);
+        drop(lig_vec);
 
         let render_pipeline_layout =
             device.create_pipeline_layout(
@@ -172,46 +136,9 @@ impl ShaderState {
             wgpu::include_spirv!("./shader.frag.spv"),
         )?;
 
-        let light_model_1 = model::Model::load(
-            2,
-            &device,
-            &queue,
-            &texture_setting.layout,
-            assets_dir.join("white_cube.obj"),
-        )?;
-        let light_model_1 = Rc::new(light_model_1);
-
-        let mut light_instance_1 = Model::instantiate(
-            light_model_1.clone(),
-            lights[0].position,
-            cgmath::Quaternion::from_axis_angle(
-                cgmath::Vector3::unit_z(),
-                cgmath::Deg(0.0)
-            ),
-            0.2
-        );
-
-        let light_model_2 = model::Model::load(
-            3,
-            &device,
-            &queue,
-            &texture_setting.layout,
-            assets_dir.join("red_cube.obj"),
-        )?;
-        let light_model_2 = Rc::new(light_model_2);
-
-        let mut light_instance_2 = Model::instantiate(
-            light_model_2.clone(),
-            lights[1].position,
-            cgmath::Quaternion::from_axis_angle(
-                cgmath::Vector3::unit_z(),
-                cgmath::Deg(0.0)
-            ),
-            0.2
-        );
-
-        let mut ins_vec = vec![&mut light_instance_1, &mut light_instance_2];
+        let mut ins_vec = light_instances.iter_mut().collect::<Vec<_>>();
         let light_instance_setting = InstanceSetting::new(&device, &mut ins_vec);
+        drop(ins_vec);
 
         let light_render_pipeline_layout =
             device.create_pipeline_layout(
@@ -234,6 +161,21 @@ impl ShaderState {
             wgpu::include_spirv!("./no_shade.frag.spv"),
         )?;
 
+        let instance_book = vec![
+            instances, light_instances
+        ].into_iter()
+            .flatten()
+            .map(|instance| {
+                let name = instance.name.clone();
+                (name, Rc::new(RefCell::new(instance)))
+            }).collect::<HashMap<_, _>>();
+
+        let mut light_book = lights
+            .into_iter()
+            .map(|light| Rc::new(RefCell::new(light)))
+            .collect::<Vec<_>>();
+        light_book.sort();
+
         Ok(Self {
             w_size,
             surface,
@@ -244,25 +186,19 @@ impl ShaderState {
 
             depth_texture,
 
-            camera,
-            camera_controller: CameraController::new(0.2),
+            camera_setting,
 
             uniform_setting,
 
-            // mdel,
-            instance,
-            instance_2,
             instance_setting,
-
-            lights,
             light_setting,
-
-            light_instance_1,
-            light_instance_2,
             light_instance_setting,
 
             render_pipeline,
             light_render_pipeline,
+
+            instance_book,
+            light_book,
         })
     }
 
@@ -272,7 +208,7 @@ impl ShaderState {
         self.sc_desc.height = new_size.height;
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
 
-        self.camera.aspect = self.sc_desc.width as f32 / self.sc_desc.height as f32;
+        self.camera_setting.projection.resize(new_size.width, new_size.height);
 
         self.depth_texture = texture::Texture::create_depth_texture(
             &self.device,
@@ -282,41 +218,66 @@ impl ShaderState {
     }
 
     pub fn input(&mut self, event: &WindowEvent) -> bool {
-        self.camera_controller.process_events(event)
+        match event {
+            WindowEvent::KeyboardInput {
+                input: KeyboardInput {
+                    virtual_keycode: Some(key),
+                    state,
+                    ..
+                },
+                ..
+            } => self.camera_setting.camera_controller.process_keyboard(*key, *state),
+            WindowEvent::MouseWheel {
+                delta,
+                ..
+            } => {
+                self.camera_setting.camera_controller.process_scroll(delta);
+                true
+            }
+            WindowEvent::MouseInput {
+                button: MouseButton::Left,
+                state,
+                ..
+            } => {
+                self.camera_setting.mouse_pressed = *state == ElementState::Pressed;
+                true
+            }
+            WindowEvent::CursorMoved {
+                position,
+                ..
+            } => {
+                let winit::dpi::PhysicalPosition{x, y} = self.camera_setting.last_mouse_pos;
+                let mouse_dx = position.x - x;
+                let mouse_dy = position.y - y;
+                self.camera_setting.last_mouse_pos = *position;
+                if self.camera_setting.mouse_pressed {
+                    self.camera_setting.camera_controller
+                        .process_mouse(mouse_dx, mouse_dy);
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
-    pub fn update(&mut self) -> Result<()> {
-        self.camera_controller.update_camera(&mut self.camera);
-        self.uniform_setting.uniforms.update_view_proj(&self.camera);
+    pub fn update<F>(&mut self, dt: std::time::Duration, f: F) -> Result<()>
+    where
+        F: Fn(&mut Self) -> Result<()>
+    {
+        self.camera_setting.camera_controller
+            .update_camera(&mut self.camera_setting.camera, dt);
+        self.uniform_setting.uniforms
+            .update_view_proj(
+                &self.camera_setting.camera,
+                &self.camera_setting.projection,
+            );
         self.queue.write_buffer(
             &self.uniform_setting.buffer,
             0,
             bytemuck::cast_slice(&[self.uniform_setting.uniforms])
         );
 
-        // Update instances
-        self.instance.rotation = cgmath::Quaternion::from_axis_angle(
-            cgmath::Vector3::unit_y(),
-            cgmath::Deg(1.0),
-        ) * self.instance.rotation;
-        self.instance_setting.update_instance(&self.queue, &self.instance).unwrap();
-
-        self.instance_2.rotation = cgmath::Quaternion::from_axis_angle(
-            cgmath::Vector3::unit_z(),
-            cgmath::Deg(1.0),
-        ) * self.instance_2.rotation;
-        self.instance_setting.update_instance(&self.queue, &self.instance_2).unwrap();
-
-        // Update the light
-        {
-            let mut light = &mut self.lights[0];
-            let p = cgmath::Quaternion::from_axis_angle((0.0, 1.0, 0.0).into(), cgmath::Deg(1.0))
-                * light.position;
-            light.position = p;
-            self.light_instance_1.position = p;
-        }
-        self.light_setting.update_light(&self.queue, &self.lights[0]);
-        self.light_instance_setting.update_instance(&self.queue, &self.light_instance_1)?;
+        f(self)?;
 
         Ok(())
     }
