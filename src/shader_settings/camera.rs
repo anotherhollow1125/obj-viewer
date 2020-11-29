@@ -50,6 +50,7 @@ impl Camera {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Projection {
     aspect: f32,
     fovy: Rad<f32>, // 視野角

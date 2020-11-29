@@ -89,6 +89,7 @@ impl Texture {
         device: &wgpu::Device,
         sc_desc: &wgpu::SwapChainDescriptor,
         label: &str,
+        view_config: Option<&wgpu::TextureViewDescriptor>
     ) -> Self {
         let size = wgpu::Extent3d {
             width: sc_desc.width,
@@ -108,7 +109,12 @@ impl Texture {
         };
 
         let texture = device.create_texture(&desc);
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let defa = wgpu::TextureViewDescriptor::default();
+        let view = texture.create_view(if let Some(d) = view_config {
+            d
+        } else {
+            &defa
+        });
         let sampler = device.create_sampler(
             &wgpu::SamplerDescriptor {
                 address_mode_u: wgpu::AddressMode::ClampToEdge,

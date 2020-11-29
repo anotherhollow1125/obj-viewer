@@ -92,8 +92,8 @@ fn prepare_objects(
             1, (0.0, 2.1, 1.2).into(), (1.0, 1.0, 0.0).into(),
             1.0, // intensity
             0.42,
-            0.8, // inner
-            0.6, // outer
+            0.99, // inner
+            0.9, // outer
             (0.0, -1.0, 0.0).into()
         ),
     ];

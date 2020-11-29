@@ -257,7 +257,8 @@ where
         material: &'b Material,
         uni_bg: &'b wgpu::BindGroup,
         ins_bg: &'b wgpu::BindGroup,
-        lig_bg: &'b wgpu::BindGroup,
+        // lig_bg: &'b wgpu::BindGroup,
+        // shm_bg: &'b wgpu::BindGroup,
     );
 
     fn draw_mesh_instanced(
@@ -267,7 +268,8 @@ where
         ins_range: Range<u32>,
         uni_bg: &'b wgpu::BindGroup,
         ins_bg: &'b wgpu::BindGroup,
-        lig_bg: &'b wgpu::BindGroup,
+        // lig_bg: &'b wgpu::BindGroup,
+        // shm_bg: &'b wgpu::BindGroup,
     );
 
     fn draw_model(
@@ -275,7 +277,8 @@ where
         model: &'b Model,
         uni_bg: &'b wgpu::BindGroup,
         ins_bg: &'b wgpu::BindGroup,
-        lig_bg: &'b wgpu::BindGroup,
+        // lig_bg: &'b wgpu::BindGroup,
+        // shm_bg: &'b wgpu::BindGroup,
     );
     fn draw_model_instanced(
         &mut self,
@@ -283,7 +286,8 @@ where
         ins_range: Range<u32>,
         uni_bg: &'b wgpu::BindGroup,
         ins_bg: &'b wgpu::BindGroup,
-        lig_bg: &'b wgpu::BindGroup,
+        // lig_bg: &'b wgpu::BindGroup,
+        // shm_bg: &'b wgpu::BindGroup,
     );
 }
 
@@ -297,7 +301,8 @@ where
         material: &'b Material,
         uni_bg: &'b wgpu::BindGroup,
         ins_bg: &'b wgpu::BindGroup,
-        lig_bg: &'b wgpu::BindGroup,
+        // lig_bg: &'b wgpu::BindGroup,
+        // shm_bg: &'b wgpu::BindGroup,
     ) {
         self.draw_mesh_instanced(
             mesh,
@@ -305,7 +310,8 @@ where
             0..1,
             uni_bg,
             ins_bg,
-            lig_bg,
+            // lig_bg,
+            // shm_bg,
         );
     }
 
@@ -316,14 +322,16 @@ where
         ins_range: Range<u32>,
         uni_bg: &'b wgpu::BindGroup,
         ins_bg: &'b wgpu::BindGroup,
-        lig_bg: &'b wgpu::BindGroup,
+        // lig_bg: &'b wgpu::BindGroup,
+        // shm_bg: &'b wgpu::BindGroup,
     ) {
         self.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
         self.set_index_buffer(mesh.index_buffer.slice(..));
         self.set_bind_group(0, &material.bind_group, &[]);
-        self.set_bind_group(1, &uni_bg, &[]);
-        self.set_bind_group(2, &ins_bg, &[]);
-        self.set_bind_group(3, &lig_bg, &[]);
+        self.set_bind_group(1, uni_bg, &[]);
+        self.set_bind_group(2, ins_bg, &[]);
+        // self.set_bind_group(3, lig_bg, &[]);
+        // self.set_bind_group(4, shm_bg, &[]);
         self.draw_indexed(0..mesh.num_elements, 0, ins_range);
     }
 
@@ -332,9 +340,10 @@ where
         model: &'b Model,
         uni_bg: &'b wgpu::BindGroup,
         ins_bg: &'b wgpu::BindGroup,
-        lig_bg: &'b wgpu::BindGroup,
+        // lig_bg: &'b wgpu::BindGroup,
+        // shm_bg: &'b wgpu::BindGroup,
     ) {
-        self.draw_model_instanced(model, 0..1, uni_bg, ins_bg, lig_bg);
+        self.draw_model_instanced(model, 0..1, uni_bg, ins_bg, /*lig_bg, shm_bg*/);
     }
 
     fn draw_model_instanced(
@@ -343,7 +352,8 @@ where
         ins_range: Range<u32>,
         uni_bg: &'b wgpu::BindGroup,
         ins_bg: &'b wgpu::BindGroup,
-        lig_bg: &'b wgpu::BindGroup,
+        // lig_bg: &'b wgpu::BindGroup,
+        // shm_bg: &'b wgpu::BindGroup,
     ) {
         for mesh in &model.meshes {
             let material = &model.materials[mesh.material];
@@ -353,7 +363,8 @@ where
                 ins_range.clone(),
                 uni_bg,
                 ins_bg,
-                lig_bg,
+                // lig_bg,
+                // shm_bg,
             );
         }
     }
@@ -435,14 +446,14 @@ impl Model {
 use std::collections::HashMap;
 
 pub struct ModelInstanceGroup {
-    len: usize,
+    pub len: usize,
     pub buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
 }
 
 pub struct InstanceSetting {
     pub layout: wgpu::BindGroupLayout,
-    group_book: HashMap<Rc<Model>, ModelInstanceGroup>,
+    pub group_book: HashMap<Rc<Model>, ModelInstanceGroup>,
 }
 
 impl InstanceSetting {
@@ -537,7 +548,8 @@ where
         &mut self,
         instance_setting: &'b InstanceSetting,
         uni_bg: &'b wgpu::BindGroup,
-        lig_bg: &'b wgpu::BindGroup,
+        // lig_bg: &'b wgpu::BindGroup,
+        // shm_bg: &'b wgpu::BindGroup,
     );
 }
 
@@ -549,7 +561,8 @@ where
         &mut self,
         instance_setting: &'b InstanceSetting,
         uni_bg: &'b wgpu::BindGroup,
-        lig_bg: &'b wgpu::BindGroup,
+        // lig_bg: &'b wgpu::BindGroup,
+        // shm_bg: &'b wgpu::BindGroup,
     ) {
         for (model, group) in instance_setting.group_book.iter() {
             self.draw_model_instanced(
@@ -557,7 +570,8 @@ where
                 0..(group.len as u32),
                 uni_bg,
                 &group.bind_group,
-                lig_bg,
+                // lig_bg,
+                // shm_bg,
             );
         }
     }

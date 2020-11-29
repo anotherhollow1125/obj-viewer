@@ -8,6 +8,8 @@ pub mod model;
 use model::*;
 pub mod light;
 use light::*;
+pub mod shadowmap;
+use shadowmap::*;
 
 #[allow(unused_imports)]
 use cgmath::prelude::*;
@@ -36,8 +38,10 @@ pub struct ShaderState {
     uniform_setting: UniformSetting,
 
     pub instance_setting: InstanceSetting,
-    pub light_setting: LightSetting,
+    pub light_buffer: LightBuffer, 
     pub light_instance_setting: InstanceSetting,
+
+    pub shadowmap: ShadowMap,
 
     render_pipeline: wgpu::RenderPipeline,
     light_render_pipeline: wgpu::RenderPipeline,
@@ -91,7 +95,7 @@ impl ShaderState {
         let swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
         let texture_setting = texture::TextureSetting::new(&device);
-        let depth_texture = texture::Texture::create_depth_texture(&device, &sc_desc, "depth_texture");
+        let depth_texture = texture::Texture::create_depth_texture(&device, &sc_desc, "depth_texture", None);
 
         let camera_setting = CameraSetting::new(sc_desc.width, sc_desc.height);
 
@@ -101,17 +105,59 @@ impl ShaderState {
             mut light_instances
         ) = f(&device, &queue, &texture_setting.layout)?;
 
-        let mut uniform_setting = uniform::UniformSetting::new(&device, lights.len() as u32);
-        uniform_setting.uniforms.update_view_proj(
-            &camera_setting.camera,
-            &camera_setting.projection,
-        );
+        let lights_len = lights.len();
 
         let mut ins_vec = instances.iter_mut().collect::<Vec<_>>();
         let instance_setting = InstanceSetting::new(&device, &mut ins_vec);
         let lig_vec = lights.iter().collect::<Vec<_>>();
-        let light_setting = LightSetting::new(&device, &lig_vec);
+        // let light_setting = LightSetting::new(&device, &lig_vec);
+        let light_buffer = LightBuffer::new(&device, &lig_vec);
         drop(lig_vec);
+
+        let mut ins_vec = light_instances.iter_mut().collect::<Vec<_>>();
+        // 影は不要
+        let light_instance_setting = InstanceSetting::new(&device, &mut ins_vec);
+        drop(ins_vec);
+
+        let instance_book = vec![
+            instances, light_instances
+        ].into_iter()
+            .flatten()
+            .map(|instance| {
+                let name = instance.name.clone();
+                (name, Rc::new(RefCell::new(instance)))
+            }).collect::<HashMap<_, _>>();
+
+        let mut light_book = lights
+            .into_iter()
+            .map(|light| Rc::new(RefCell::new(light)))
+            .collect::<Vec<_>>();
+        light_book.sort();
+
+        let main_light = light_book[0].borrow();
+
+        let shadowmap = ShadowMap::new(
+            cgmath::Point3::from_vec(main_light.position),
+            -main_light.position.normalize(),
+            camera_setting.projection.clone(),
+            &device,
+            &queue,
+            &sc_desc,
+            &instance_setting.layout,
+        );
+
+        drop(main_light);
+
+        let mut uniform_setting = uniform::UniformSetting::new(
+            &device,
+            lights_len as u32,
+            &light_buffer.buffer,
+            &shadowmap,
+        );
+        uniform_setting.uniforms.update_view_proj(
+            &camera_setting.camera,
+            &camera_setting.projection,
+        );
 
         let render_pipeline_layout =
             device.create_pipeline_layout(
@@ -122,7 +168,6 @@ impl ShaderState {
                         &texture_setting.layout,
                         &uniform_setting.layout,
                         &instance_setting.layout,
-                        &light_setting.layout,
                     ],
                     push_constant_ranges: &[],
                 }
@@ -135,10 +180,6 @@ impl ShaderState {
             wgpu::include_spirv!("./shader.vert.spv"),
             wgpu::include_spirv!("./shader.frag.spv"),
         )?;
-
-        let mut ins_vec = light_instances.iter_mut().collect::<Vec<_>>();
-        let light_instance_setting = InstanceSetting::new(&device, &mut ins_vec);
-        drop(ins_vec);
 
         let light_render_pipeline_layout =
             device.create_pipeline_layout(
@@ -161,21 +202,6 @@ impl ShaderState {
             wgpu::include_spirv!("./no_shade.frag.spv"),
         )?;
 
-        let instance_book = vec![
-            instances, light_instances
-        ].into_iter()
-            .flatten()
-            .map(|instance| {
-                let name = instance.name.clone();
-                (name, Rc::new(RefCell::new(instance)))
-            }).collect::<HashMap<_, _>>();
-
-        let mut light_book = lights
-            .into_iter()
-            .map(|light| Rc::new(RefCell::new(light)))
-            .collect::<Vec<_>>();
-        light_book.sort();
-
         Ok(Self {
             w_size,
             surface,
@@ -191,8 +217,10 @@ impl ShaderState {
             uniform_setting,
 
             instance_setting,
-            light_setting,
+            light_buffer,
             light_instance_setting,
+
+            shadowmap,
 
             render_pipeline,
             light_render_pipeline,
@@ -213,8 +241,11 @@ impl ShaderState {
         self.depth_texture = texture::Texture::create_depth_texture(
             &self.device,
             &self.sc_desc,
-            "depth_texture"
+            "depth_texture",
+            None
         );
+
+        self.shadowmap.resize(&self.device, &self.sc_desc);
     }
 
     pub fn input(&mut self, event: &WindowEvent) -> bool {
@@ -293,6 +324,11 @@ impl ShaderState {
             }
         );
 
+        self.shadowmap.render_to_texture(
+            &mut encoder,
+            &self.instance_setting,
+        );
+
         // borrow encoder as &mut
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             // 色について
@@ -329,14 +365,14 @@ impl ShaderState {
         render_pass.draw_model_instance_groups(
             &self.light_instance_setting,
             &self.uniform_setting.bind_group,
-            &self.light_setting.bind_group,
+            // &self.light_setting.bind_group,
         );
 
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.draw_model_instance_groups(
             &self.instance_setting,
             &self.uniform_setting.bind_group,
-            &self.light_setting.bind_group,
+            // &self.light_setting.bind_group,
         );
         // borrow end
         drop(render_pass);

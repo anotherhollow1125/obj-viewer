@@ -121,6 +121,39 @@ pub struct LightRaw {
 unsafe impl bytemuck::Zeroable for LightRaw {}
 unsafe impl bytemuck::Pod for LightRaw {}
 
+pub struct LightBuffer {
+    pub buffer: wgpu::Buffer,
+}
+
+impl LightBuffer {
+    pub fn new(device: &wgpu::Device, lights: &[&Light]) -> Self {
+        let light_raws = lights.iter().map(|light| light.to_raw()).collect::<Vec<_>>();
+
+        let buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Lights Buffer"), // VB ... ?
+                contents: bytemuck::cast_slice(&light_raws),
+                usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
+            }
+        );
+
+        Self {
+            buffer,
+        }
+    }
+
+    pub fn update_light(&mut self, queue: &wgpu::Queue, light: &Light) {
+        let offset = light.id * std::mem::size_of::<LightRaw>();
+        let offset = offset as u64;
+        queue.write_buffer(
+            &self.buffer,
+            offset,
+            bytemuck::cast_slice(&[light.to_raw()])
+        );
+    }
+}
+
+/*
 pub struct LightSetting {
     pub buffer: wgpu::Buffer,
     pub layout: wgpu::BindGroupLayout,
@@ -184,3 +217,4 @@ impl LightSetting {
         );
     }
 }
+*/

@@ -6,7 +6,8 @@ layout(location = 2) in vec3 a_normal;
 
 layout(location = 0) out vec2 v_tex_coords;
 layout(location = 1) out vec3 v_normal;
-layout(location = 2) out vec3 v_position;
+layout(location = 2) out vec4 v_position;
+// layout(location = 3) out vec4 s_gl_position;
 
 layout(set = 1, binding = 0)
 uniform Uniforms {
@@ -35,6 +36,8 @@ void main() {
     v_normal = normal_matrix * a_normal;
 
     vec4 instance_space = instance_matrix * vec4(a_position, 1.0);
-    v_position = instance_space.xyz;
-    gl_Position = u_view_proj * instance_matrix * vec4(a_position, 1.0);
+    v_position = instance_space;
+
+    gl_Position = u_view_proj * instance_space;
+    // s_gl_position = gl_Position;
 }
