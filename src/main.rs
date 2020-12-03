@@ -67,7 +67,21 @@ fn main() -> Result<()> {
                 let now = std::time::Instant::now();
                 let dt = now - last_render_time;
                 last_render_time = now;
-                state.update(dt, |_| Ok(())).unwrap();
+                state.update(dt, |s| {
+
+                    let mut main_light = s.light_book[0].borrow_mut();
+                    let old_position = main_light.position;
+                    main_light.position =
+                        cgmath::Quaternion::from_axis_angle((0.0, 1.0, 0.0).into(), cgmath::Deg(0.1))
+                        * old_position;
+                    s.light_buffer.update_light(&s.queue, &main_light);
+
+                    s.shadowmap.position = cgmath::Point3::from_vec(main_light.position);
+                    s.shadowmap.direction = -main_light.position.normalize();
+                    s.shadowmap.update_view_proj(&s.queue);
+
+                    Ok(())
+                }).unwrap();
                 state.render();
             },
             Event::MainEventsCleared => {

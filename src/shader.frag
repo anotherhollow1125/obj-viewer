@@ -43,6 +43,8 @@ uniform MaterialUniform {
 layout(set = 1, binding = 2)
 uniform ShadowUniforms {
     mat4 shadow_view_proj;
+    uint tex_width;
+    uint tex_height;
 };
 layout(set = 1, binding = 3) uniform texture2D t_shadow;
 layout(set = 1, binding = 4) uniform samplerShadow s_shadow;
@@ -51,15 +53,25 @@ float fetch_shadow(vec4 homogeneous_coords) {
     if (homogeneous_coords.w <= 0.0) {
         return 1.0;
     }
+
+    float z_val = homogeneous_coords.z / homogeneous_coords.w;
+
     // compensate for the Y-flip difference between the NDC and texture coordinates
     const vec2 flip_correction = vec2(0.5, -0.5);
+    vec2 xy_val = homogeneous_coords.xy * flip_correction/homogeneous_coords.w + 0.5;
+
+    if (xy_val.x < 0 || tex_width <= xy_val.x || xy_val.y < 0 || tex_height <= xy_val.y) {
+        return 1.0;
+    }
+
     // compute texture coordinates for shadow lookup
     vec3 light_local = vec3(
-        homogeneous_coords.xy * flip_correction/homogeneous_coords.w + 0.5,
-        homogeneous_coords.z / homogeneous_coords.w
+        xy_val,
+        z_val
     );
     // do the lookup, using HW PCF and comparison
-    return texture(sampler2DShadow(t_shadow, s_shadow), light_local);
+    // return z_val > texture(sampler2DShadow(t_shadow, s_shadow), light_local) ? 0.5 : 1.0;
+    return max(texture(sampler2DShadow(t_shadow, s_shadow), light_local), 0.5);
 }
 
 void main() {
@@ -122,7 +134,7 @@ void main() {
         result.rgb = result.rgb * 0.5;
     }
     */
-    result.rgb *= max(light_hit, 0.7 * fetch_shadow(shadow_view_proj * v_position));
+    result.rgb *= max(light_hit, fetch_shadow(shadow_view_proj * v_position));
 
     f_color = vec4(result, object_color.a);
 }

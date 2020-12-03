@@ -139,7 +139,8 @@ impl ShaderState {
         let shadowmap = ShadowMap::new(
             cgmath::Point3::from_vec(main_light.position),
             -main_light.position.normalize(),
-            camera_setting.projection.clone(),
+            // camera_setting.projection.clone(),
+            Projection::new(sc_desc.width, sc_desc.height, cgmath::Deg(45.0), 0.1, 100.0),
             &device,
             &queue,
             &sc_desc,

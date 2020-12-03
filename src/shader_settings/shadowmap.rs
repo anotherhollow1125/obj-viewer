@@ -8,15 +8,19 @@ use wgpu::util::DeviceExt;
 #[derive(Debug, Copy, Clone)]
 struct LightViewUniform {
     view_proj: Matrix4<f32>,
+    tex_width: u32,
+    tex_height: u32,
 }
 
 unsafe impl bytemuck::Pod for LightViewUniform {}
 unsafe impl bytemuck::Zeroable for LightViewUniform {}
 
 impl LightViewUniform {
-    fn new() -> Self {
+    fn new(tex_width: u32, tex_height: u32) -> Self {
         Self {
             view_proj: cgmath::Matrix4::identity(),
+            tex_width,
+            tex_height,
         }
     }
 }
@@ -84,7 +88,7 @@ impl ShadowMap {
                 label: Some("shadowMap_bind_group_layout"),
             }
         );
-        let light_view_uniform = LightViewUniform::new();
+        let light_view_uniform = LightViewUniform::new(sc_desc.width, sc_desc.height);
         let uniform_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("shadowmap Buffer"),
@@ -184,18 +188,20 @@ impl ShadowMap {
             // tex_bind_group,
         };
 
-        res.update_view_proj();
+        res.update_view_proj(queue);
+        /*
         queue.write_buffer(
             &res.uniform_buffer,
             0,
             bytemuck::cast_slice(&[res.light_view_uniform])
         );
+        */
 
         res
     }
 
     // 光源位置変更時に呼び出す必要がある
-    pub fn update_view_proj(&mut self) {
+    pub fn update_view_proj(&mut self, queue: &wgpu::Queue) {
         // self.light_view_uniform.view_position = self.position.to_homogeneous();
         let m = Matrix4::look_at_dir(
             self.position,
@@ -203,6 +209,11 @@ impl ShadowMap {
             Vector3::unit_y(),
         );
         self.light_view_uniform.view_proj = self.projection.calc_matrix() * m;
+        queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[self.light_view_uniform])
+        );
     }
 
     fn create_render_pipeline(
