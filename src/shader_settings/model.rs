@@ -451,31 +451,16 @@ pub struct ModelInstanceGroup {
     pub bind_group: wgpu::BindGroup,
 }
 
-pub struct InstanceSetting {
-    pub layout: wgpu::BindGroupLayout,
+pub struct ModelInstanceGroupBook {
     pub group_book: HashMap<Rc<Model>, ModelInstanceGroup>,
 }
 
-impl InstanceSetting {
-    pub fn new(device: &wgpu::Device, instances: &mut [&mut Instance]) -> Self {
-        let layout = device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::VERTEX,
-                        ty: wgpu::BindingType::StorageBuffer {
-                            dynamic: false,
-                            readonly: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-                label: Some("instance_bind_group_layout"),
-            }
-        );
-
+impl ModelInstanceGroupBook {
+    pub fn new(
+        device: &wgpu::Device,
+        instances: &mut [&mut Instance],
+        layout: &wgpu::BindGroupLayout,
+    ) -> Self {
         let mut instance_sort = HashMap::new();
 
         for ins in instances.iter_mut() {
@@ -501,7 +486,7 @@ impl InstanceSetting {
 
             let bind_group = device.create_bind_group(
                 &wgpu::BindGroupDescriptor {
-                    layout: &layout,
+                    layout,
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
@@ -520,7 +505,6 @@ impl InstanceSetting {
         }).collect::<HashMap<_, _>>();
 
         Self {
-            layout,
             group_book,
         }
     }
@@ -540,16 +524,44 @@ impl InstanceSetting {
     }
 }
 
+pub struct InstanceSetting {
+    pub layout: wgpu::BindGroupLayout,
+}
+
+impl InstanceSetting {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let layout = device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::VERTEX,
+                        ty: wgpu::BindingType::StorageBuffer {
+                            dynamic: false,
+                            readonly: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+                label: Some("instance_bind_group_layout"),
+            }
+        );
+
+        Self {
+            layout,
+        }
+    }
+}
+
 pub trait DrawModelInstanceGroups<'a, 'b>
 where
     'b: 'a,
 {
     fn draw_model_instance_groups(
         &mut self,
-        instance_setting: &'b InstanceSetting,
+        model_instance_group_book: &'b ModelInstanceGroupBook,
         uni_bg: &'b wgpu::BindGroup,
-        // lig_bg: &'b wgpu::BindGroup,
-        // shm_bg: &'b wgpu::BindGroup,
     );
 }
 
@@ -559,19 +571,15 @@ where
 {
     fn draw_model_instance_groups(
         &mut self,
-        instance_setting: &'b InstanceSetting,
+        model_instance_group_book: &'b ModelInstanceGroupBook,
         uni_bg: &'b wgpu::BindGroup,
-        // lig_bg: &'b wgpu::BindGroup,
-        // shm_bg: &'b wgpu::BindGroup,
     ) {
-        for (model, group) in instance_setting.group_book.iter() {
+        for (model, group) in model_instance_group_book.group_book.iter() {
             self.draw_model_instanced(
                 model,
                 0..(group.len as u32),
                 uni_bg,
                 &group.bind_group,
-                // lig_bg,
-                // shm_bg,
             );
         }
     }

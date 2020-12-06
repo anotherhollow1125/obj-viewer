@@ -1,9 +1,5 @@
 use wgpu::util::DeviceExt;
-
-// memo
-// StorageBuffer
-// let lights: Vec<Light>;
-// contents: bytemuck::cast_slice(&lights);
+use crate::shader_settings::shadowmap;
 
 // 光源の設定
 pub struct Light {
@@ -16,6 +12,7 @@ pub struct Light {
     pub limitcos_inner: f32,
     pub limitcos_outer: f32,
     pub limitdir: cgmath::Vector3<f32>,
+    pub shadow: shadowmap::ShadowMap,
 }
 
 impl Light {
@@ -25,6 +22,7 @@ impl Light {
         color: cgmath::Vector3<f32>,
         intensity: f32,
         radius: f32,
+        shadow: shadowmap::ShadowMap,
     ) -> Self {
         Self {
             id, position, color,
@@ -34,6 +32,7 @@ impl Light {
             limitcos_inner: 0.9,
             limitcos_outer: 0.1,
             limitdir: (0.0, 0.0, 0.0).into(),
+            shadow,
         }
     }
 
@@ -46,6 +45,7 @@ impl Light {
         limitcos_inner: f32,
         limitcos_outer: f32,
         limitdir: cgmath::Vector3<f32>,
+        shadow: shadowmap::ShadowMap,
     ) -> Self {
         Self {
             id, position, color,
@@ -55,6 +55,7 @@ impl Light {
             limitcos_inner,
             limitcos_outer,
             limitdir,
+            shadow,
         }
     }
 

@@ -40,21 +40,29 @@ uniform MaterialUniform {
     vec3 u_specular;
 };
 
-layout(set = 1, binding = 2)
-uniform ShadowUniforms {
+struct ShadowUniform {
     mat4 shadow_view_proj;
     uint tex_width;
     uint tex_height;
+    float darkness;
 };
-layout(set = 1, binding = 3) uniform texture2D t_shadow;
+
+layout(set = 1, binding = 2)
+buffer ShadowUniforms {
+    ShadowUniform shadows[];
+};
+layout(set = 1, binding = 3) uniform texture2DArray t_shadow;
 layout(set = 1, binding = 4) uniform samplerShadow s_shadow;
 
-float fetch_shadow(vec4 homogeneous_coords) {
+float fetch_shadow(int light_id, vec4 homogeneous_coords) {
     if (homogeneous_coords.w <= 0.0) {
         return 1.0;
     }
 
     float z_val = homogeneous_coords.z / homogeneous_coords.w;
+
+    uint tex_width = shadows[light_id].tex_width;
+    uint tex_height = shadows[light_id].tex_height;
 
     // compensate for the Y-flip difference between the NDC and texture coordinates
     const vec2 flip_correction = vec2(0.5, -0.5);
@@ -65,13 +73,14 @@ float fetch_shadow(vec4 homogeneous_coords) {
     }
 
     // compute texture coordinates for shadow lookup
-    vec3 light_local = vec3(
+    vec4 light_local = vec4(
         xy_val,
+        light_id,
         z_val
     );
     // do the lookup, using HW PCF and comparison
     // return z_val > texture(sampler2DShadow(t_shadow, s_shadow), light_local) ? 0.5 : 1.0;
-    return max(texture(sampler2DShadow(t_shadow, s_shadow), light_local), 0.5);
+    return max(texture(sampler2DArrayShadow(t_shadow, s_shadow), light_local), shadows[light_id].darkness);
 }
 
 void main() {
@@ -117,24 +126,11 @@ void main() {
         float specular_strength = pow(max(dot(normal, half_dir), 0.0), 32);
         vec3 specular_color = specular_strength * in_light * l_color;
 
-        result += l_intensity * (ambient_color + diffuse_color + specular_color) * object_color.xyz;
-
-        light_hit = max(in_light, light_hit) * i;
+        vec3 lig = l_intensity * (ambient_color + diffuse_color + specular_color) * object_color.xyz;
+        result += lig * fetch_shadow(i, shadows[i].shadow_view_proj * v_position);
     }
 
-    /*
-    vec2 shadow_texcoord;
-    vec4 p = shadow_view_proj * v_position;
-    shadow_texcoord.x = (1.0 + p.x/p.w) * 0.5;
-    shadow_texcoord.y = (1.0 - p.y/p.w) * 0.5;
-    float shadow_z = texture(sampler2D(t_shadow, s_shadow), shadow_texcoord).x;
-    float z_val = p.z/p.w;
-
-    if (z_val > shadow_z + 0.005) {
-        result.rgb = result.rgb * 0.5;
-    }
-    */
-    result.rgb *= max(light_hit, fetch_shadow(shadow_view_proj * v_position));
+    // result.rgb *= max(light_hit, fetch_shadow(shadow_view_proj * v_position));
 
     f_color = vec4(result, object_color.a);
 }

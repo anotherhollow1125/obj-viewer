@@ -1,40 +1,89 @@
-use crate::shader_settings::texture::Texture;
+// use crate::shader_settings::texture::Texture;
 use crate::shader_settings::camera::Projection;
-use crate::shader_settings::model::{self, Vertex, InstanceSetting};
+use crate::shader_settings::model::{self, Vertex, ModelInstanceGroupBook};
 use cgmath::*;
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-struct LightViewUniform {
+pub struct ShadowUniform {
     view_proj: Matrix4<f32>,
     tex_width: u32,
     tex_height: u32,
+    darkness: f32,
+    _p: u32,
 }
 
-unsafe impl bytemuck::Pod for LightViewUniform {}
-unsafe impl bytemuck::Zeroable for LightViewUniform {}
+unsafe impl bytemuck::Pod for ShadowUniform {}
+unsafe impl bytemuck::Zeroable for ShadowUniform {}
 
-impl LightViewUniform {
-    fn new(tex_width: u32, tex_height: u32) -> Self {
+impl ShadowUniform {
+    fn new(tex_width: u32, tex_height: u32, darkness: f32) -> Self {
         Self {
             view_proj: cgmath::Matrix4::identity(),
             tex_width,
             tex_height,
+            darkness,
+            _p: 0,
         }
     }
 }
 
+pub struct ShadowUniformBuffer {
+    pub buffer: wgpu::Buffer,
+}
+
+impl ShadowUniformBuffer {
+    pub fn new(device: &wgpu::Device, uniforms: &[ShadowUniform]) -> Self {
+        let buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Shadow Uniforms Buffer"),
+                contents: bytemuck::cast_slice(uniforms),
+                usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
+            }
+        );
+
+        Self {
+            buffer,
+        }
+    }
+
+    pub fn update_uniform(&mut self, queue: &wgpu::Queue, shadowmap: &ShadowMap) {
+        let offset = shadowmap.id * std::mem::size_of::<ShadowUniform>();
+        let offset = offset as u64;
+        queue.write_buffer(
+            &self.buffer,
+            offset,
+            bytemuck::cast_slice(&[shadowmap.shadow_uniform])
+        );
+    }
+}
+
+pub enum DirUpdateWay {
+    SunLight { // don't use vec3_arg, it use the light pos
+        anchor_pos: Vector3<f32>, // use it to decide the direction
+    },
+    SpotLight, // recognize vec3_arg as direction
+    Constant {
+        dir: Vector3<f32>,
+    },
+    Custom {
+        f: Box<dyn Fn(Vector3<f32>) -> Vector3<f32>>,
+    },
+}
+
 pub struct ShadowMap {
+    id: usize,
     pub position: Point3<f32>,
     pub direction: Vector3<f32>,
+    dir_update_way: DirUpdateWay,
     projection: Projection,
-    light_view_uniform: LightViewUniform,
+    pub shadow_uniform: ShadowUniform,
     pub render_pipeline: wgpu::RenderPipeline,
-    pub texture: Texture,
+    // pub texture: Texture,
     target_view: wgpu::TextureView,
     // bake_layout: wgpu::BindGroupLayout,
-    pub uniform_buffer: wgpu::Buffer,
+    uniform_buffer_for_bake: wgpu::Buffer,
     bake_bind_group: wgpu::BindGroup,
 
     // pub tex_layout: wgpu::BindGroupLayout,
@@ -44,34 +93,34 @@ pub struct ShadowMap {
 impl ShadowMap {
     const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-    const VIEW_CONFIG: wgpu::TextureViewDescriptor<'static> = wgpu::TextureViewDescriptor {
-        label: Some("shadow"),
-        format: None,
-        dimension: Some(wgpu::TextureViewDimension::D2),
-        aspect: wgpu::TextureAspect::All,
-        base_mip_level: 0,
-        level_count: None,
-        base_array_layer: 0,
-        array_layer_count: std::num::NonZeroU32::new(1),
-    };
+    fn view_config<'a>(id: usize) -> wgpu::TextureViewDescriptor<'a> {
+        wgpu::TextureViewDescriptor {
+            label: Some("shadow"),
+            format: None,
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            aspect: wgpu::TextureAspect::All,
+            base_mip_level: 0,
+            level_count: None,
+            base_array_layer: id as u32,
+            array_layer_count: std::num::NonZeroU32::new(1),
+        }
+    }
 
     pub fn new(
+        id: usize,
         position: Point3<f32>,
-        direction: Vector3<f32>,
+        init_vec: Vector3<f32>,
+        darkness: f32,
+        dir_update_way: DirUpdateWay,
         projection: Projection,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         sc_desc: &wgpu::SwapChainDescriptor,
         instance_layout: &wgpu::BindGroupLayout,
+        shadow_texture: &wgpu::Texture,
     ) -> Self {
-        let texture = Texture::create_depth_texture(
-            device,
-            sc_desc,
-            "ShadowMap texture",
-            // Some(&Self::VIEW_CONFIG),
-            None,
-        );
-        let target_view = texture.texture.create_view(&Self::VIEW_CONFIG);
+        let v_conf = Self::view_config(id);
+        let target_view = shadow_texture.create_view(&v_conf);
         let bake_layout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
                 entries: &[
@@ -88,21 +137,23 @@ impl ShadowMap {
                 label: Some("shadowMap_bind_group_layout"),
             }
         );
-        let light_view_uniform = LightViewUniform::new(sc_desc.width, sc_desc.height);
-        let uniform_buffer = device.create_buffer_init(
+        let shadow_uniform = ShadowUniform::new(sc_desc.width, sc_desc.height, darkness);
+
+        let uniform_buffer_for_bake = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("shadowmap Buffer"),
-                contents: bytemuck::cast_slice(&[light_view_uniform]),
+                contents: bytemuck::cast_slice(&[shadow_uniform]),
                 usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
             }
         );
+
         let bake_bind_group = device.create_bind_group(
             &wgpu::BindGroupDescriptor {
                 layout: &bake_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::Buffer(uniform_buffer.slice(..)),
+                        resource: wgpu::BindingResource::Buffer(uniform_buffer_for_bake.slice(..)),
                     },
                 ],
                 label: None,
@@ -127,92 +178,89 @@ impl ShadowMap {
             wgpu::include_spirv!("../bake.vert.spv"),
         );
 
-        /*
-        let tex_layout = device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::SampledTexture {
-                            multisampled: false,
-                            dimension: wgpu::TextureViewDimension::D2,
-                            component_type: wgpu::TextureComponentType::Uint,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler {
-                            comparison: true,
-                        },
-                        count: None,
-                    },
-                ],
-                label: Some("shadowMap_bind_group_layout"),
-            }
-        );
-
-        let tex_bind_group = device.create_bind_group(
-            &wgpu::BindGroupDescriptor {
-                layout: &tex_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&texture.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&texture.sampler),
-                    },
-                ],
-                label: None,
-            }
-        );
-        */
-
-        let mut res = Self {
+        let res = Self {
+            id,
             position,
-            direction,
+            direction: init_vec,
+            dir_update_way,
             projection,
-            light_view_uniform,
+            shadow_uniform,
             render_pipeline,
-            texture,
             target_view,
             // bake_layout,
-            uniform_buffer,
+            uniform_buffer_for_bake,
             bake_bind_group,
 
             // tex_layout,
             // tex_bind_group,
         };
 
-        res.update_view_proj(queue);
-        /*
+        // res.update(None, Some(init_vec), queue, shadow_uniform_buffer);
+        // res.update_view_proj(queue);
+
         queue.write_buffer(
-            &res.uniform_buffer,
+            &res.uniform_buffer_for_bake,
             0,
-            bytemuck::cast_slice(&[res.light_view_uniform])
+            bytemuck::cast_slice(&[res.shadow_uniform])
         );
-        */
 
         res
     }
 
-    // 光源位置変更時に呼び出す必要がある
-    pub fn update_view_proj(&mut self, queue: &wgpu::Queue) {
-        // self.light_view_uniform.view_position = self.position.to_homogeneous();
+    pub fn update(
+        &mut self,
+        pos_v_w: Option<Vector3<f32>>,
+        dir_v_w: Option<Vector3<f32>>,
+        queue: &wgpu::Queue,
+        shadow_uniform_buffer: &mut ShadowUniformBuffer
+    ) {
+        use DirUpdateWay::*;
+
+        if let Some(pos_v) = pos_v_w {
+            self.position = Point3::from_vec(pos_v);
+        }
+
+        if let Some(dir_v) = dir_v_w {
+            self.direction = match &self.dir_update_way {
+                SunLight {anchor_pos} => anchor_pos - self.position.to_vec(),
+                SpotLight => dir_v,
+                Constant {dir} => *dir,
+                Custom { f } => f(dir_v),
+            };
+        } else {
+            match &self.dir_update_way {
+                SunLight {anchor_pos} => self.direction = anchor_pos - self.position.to_vec(),
+                // Constant {dir} => self.direction = *dir,
+                _ => (),
+            }
+        }
+
+        self.update_view_proj(queue, shadow_uniform_buffer);
+    }
+
+    // 光源位置変更時等に呼び出す必要がある
+    fn update_view_proj(&mut self, queue: &wgpu::Queue, shadow_uniform_buffer: &mut ShadowUniformBuffer) {
+        // self.shadow_uniform.view_position = self.position.to_homogeneous();
+        let n = self.direction.normalize();
+        let axis = if n.x.powi(2) + n.z.powi(2) != 0.0 {
+            Vector3::unit_y()
+        } else {
+            Vector3::unit_x()
+        };
+
         let m = Matrix4::look_at_dir(
             self.position,
-            self.direction.normalize(),
-            Vector3::unit_y(),
+            n,
+            axis,
         );
-        self.light_view_uniform.view_proj = self.projection.calc_matrix() * m;
+        self.shadow_uniform.view_proj = self.projection.calc_matrix() * m;
+
+        shadow_uniform_buffer.update_uniform(queue, self);
+
         queue.write_buffer(
-            &self.uniform_buffer,
+            &self.uniform_buffer_for_bake,
             0,
-            bytemuck::cast_slice(&[self.light_view_uniform])
+            bytemuck::cast_slice(&[self.shadow_uniform])
         );
     }
 
@@ -273,22 +321,16 @@ impl ShadowMap {
         res
     }
 
-    pub fn resize(&mut self, device: &wgpu::Device, sc_desc: &wgpu::SwapChainDescriptor) {
+    #[allow(dead_code)]
+    pub fn resize(&mut self, sc_desc: &wgpu::SwapChainDescriptor) {
         self.projection.resize(sc_desc.width, sc_desc.height);
-
-        self.texture = Texture::create_depth_texture(
-            device,
-            sc_desc,
-            "ShadowMap texture",
-            // Some(&Self::VIEW_CONFIG),
-            None,
-        );
     }
 
     pub fn render_to_texture(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        instance_setting: &InstanceSetting,
+        // instance_setting: &InstanceSetting,
+        model_instance_group_book: &ModelInstanceGroupBook,
     ) {
         // borrow encoder as &mut
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -309,7 +351,8 @@ impl ShadowMap {
 
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.draw_shadow_of_instance_groups(
-            instance_setting,
+            // instance_setting,
+            model_instance_group_book,
             &self.bake_bind_group,
         );
         // borrow end
@@ -325,7 +368,8 @@ where
 {
     fn draw_shadow_of_instance_groups(
         &mut self,
-        instance_setting: &'b InstanceSetting,
+        // instance_setting: &'b InstanceSetting,
+        model_instance_group_book: &'b ModelInstanceGroupBook,
         uni_bg: &'b wgpu::BindGroup,
     );
 }
@@ -336,10 +380,11 @@ where
 {
     fn draw_shadow_of_instance_groups(
         &mut self,
-        instance_setting: &'b InstanceSetting,
+        // instance_setting: &'b InstanceSetting,
+        model_instance_group_book: &'b ModelInstanceGroupBook,
         uni_bg: &'b wgpu::BindGroup,
     ) {
-        for (model, group) in instance_setting.group_book.iter() {
+        for (model, group) in model_instance_group_book.group_book.iter() {
             for mesh in &model.meshes {
                 self.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 self.set_index_buffer(mesh.index_buffer.slice(..));

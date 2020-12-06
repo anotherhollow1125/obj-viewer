@@ -9,7 +9,7 @@ use model::*;
 pub mod light;
 use light::*;
 pub mod shadowmap;
-use shadowmap::*;
+// use shadowmap::*;
 
 #[allow(unused_imports)]
 use cgmath::prelude::*;
@@ -32,16 +32,20 @@ pub struct ShaderState {
     swap_chain: wgpu::SwapChain,
 
     depth_texture: Texture,
+    // shadow_texture: Texture,
 
     camera_setting: CameraSetting,
 
+    pub shadow_uniform_buffer: shadowmap::ShadowUniformBuffer,
     uniform_setting: UniformSetting,
 
-    pub instance_setting: InstanceSetting,
+    // instance_setting: InstanceSetting,
+    pub model_instance_group_book: ModelInstanceGroupBook,
     pub light_buffer: LightBuffer, 
-    pub light_instance_setting: InstanceSetting,
+    // light_instance_setting: InstanceSetting,
+    pub light_instance_group_book: ModelInstanceGroupBook,
 
-    pub shadowmap: ShadowMap,
+    // pub shadowmap: ShadowMap,
 
     render_pipeline: wgpu::RenderPipeline,
     light_render_pipeline: wgpu::RenderPipeline,
@@ -60,7 +64,10 @@ impl ShaderState {
         F: Fn(
             &wgpu::Device,
             &wgpu::Queue,
-            &wgpu::BindGroupLayout,
+            &wgpu::SwapChainDescriptor,
+            &wgpu::BindGroupLayout, // Texture
+            &wgpu::BindGroupLayout, // Instance
+            &wgpu::Texture, // shadow texture
         ) -> Result<(Vec<Instance>, Vec<Light>, Vec<Instance>)>
     {
         let w_size = window.inner_size();
@@ -95,28 +102,79 @@ impl ShaderState {
         let swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
         let texture_setting = texture::TextureSetting::new(&device);
-        let depth_texture = texture::Texture::create_depth_texture(&device, &sc_desc, "depth_texture", None);
+        let depth_texture = texture::Texture::create_depth_texture(&device, &sc_desc, "depth_texture");
+
+        let shadow_texture = texture::Texture::create_shadow_texture(&device, &sc_desc);
 
         let camera_setting = CameraSetting::new(sc_desc.width, sc_desc.height);
 
+        let instance_setting = InstanceSetting::new(&device);
+        // let light_instance_setting = InstanceSetting::new(&device);
+
         let (
             mut instances,
-            lights,
+            mut lights,
             mut light_instances
-        ) = f(&device, &queue, &texture_setting.layout)?;
+        ) = f(
+            &device,
+            &queue,
+            &sc_desc,
+            &texture_setting.layout,
+            &instance_setting.layout,
+            &shadow_texture.texture,
+        )?;
 
-        let lights_len = lights.len();
+        // let lights_len = lights.len();
 
         let mut ins_vec = instances.iter_mut().collect::<Vec<_>>();
-        let instance_setting = InstanceSetting::new(&device, &mut ins_vec);
-        let lig_vec = lights.iter().collect::<Vec<_>>();
+
+        let model_instance_group_book = ModelInstanceGroupBook::new(
+            &device,
+            &mut ins_vec,
+            &instance_setting.layout,
+        );
+
+        let mut lig_vec = lights.iter().collect::<Vec<_>>();
+        lig_vec.sort();
         // let light_setting = LightSetting::new(&device, &lig_vec);
         let light_buffer = LightBuffer::new(&device, &lig_vec);
+        let shadow_uniforms = lig_vec.iter().map(|light| light.shadow.shadow_uniform).collect::<Vec<_>>();
+        let mut shadow_uniform_buffer = shadowmap::ShadowUniformBuffer::new(&device, &shadow_uniforms);
+
+        let mut uniform_setting = uniform::UniformSetting::new(
+            &device,
+            // lights_len as u32,
+            &lig_vec,
+            &light_buffer.buffer,
+            &shadow_uniform_buffer.buffer,
+            &shadow_texture,
+            // &shadowmap,
+        );
+        uniform_setting.uniforms.update_view_proj(
+            &camera_setting.camera,
+            &camera_setting.projection,
+        );
+
         drop(lig_vec);
+
+        for light in lights.iter_mut() {
+            let pos = light.shadow.position;
+            let dir = light.shadow.direction;
+            light.shadow.update(
+                Some(pos.to_vec()),
+                Some(dir),
+                &queue,
+                &mut shadow_uniform_buffer,
+            );
+        }
 
         let mut ins_vec = light_instances.iter_mut().collect::<Vec<_>>();
         // 影は不要
-        let light_instance_setting = InstanceSetting::new(&device, &mut ins_vec);
+        let light_instance_group_book = ModelInstanceGroupBook::new(
+            &device,
+            &mut ins_vec,
+            &instance_setting.layout,
+        );
         drop(ins_vec);
 
         let instance_book = vec![
@@ -134,8 +192,9 @@ impl ShaderState {
             .collect::<Vec<_>>();
         light_book.sort();
 
-        let main_light = light_book[0].borrow();
+        // let main_light = light_book[0].borrow();
 
+        /*
         let shadowmap = ShadowMap::new(
             cgmath::Point3::from_vec(main_light.position),
             -main_light.position.normalize(),
@@ -146,19 +205,9 @@ impl ShaderState {
             &sc_desc,
             &instance_setting.layout,
         );
+        */
 
-        drop(main_light);
-
-        let mut uniform_setting = uniform::UniformSetting::new(
-            &device,
-            lights_len as u32,
-            &light_buffer.buffer,
-            &shadowmap,
-        );
-        uniform_setting.uniforms.update_view_proj(
-            &camera_setting.camera,
-            &camera_setting.projection,
-        );
+        // drop(main_light);
 
         let render_pipeline_layout =
             device.create_pipeline_layout(
@@ -189,7 +238,7 @@ impl ShaderState {
                     bind_group_layouts: &[
                         &texture_setting.layout,
                         &uniform_setting.layout,
-                        &light_instance_setting.layout,
+                        &instance_setting.layout,
                     ],
                     push_constant_ranges: &[],
                 }
@@ -212,16 +261,19 @@ impl ShaderState {
             swap_chain,
 
             depth_texture,
+            // shadow_texture,
 
             camera_setting,
 
+            shadow_uniform_buffer,
             uniform_setting,
 
-            instance_setting,
+            // instance_setting,
+            model_instance_group_book,
             light_buffer,
-            light_instance_setting,
+            light_instance_group_book,
 
-            shadowmap,
+            // shadowmap,
 
             render_pipeline,
             light_render_pipeline,
@@ -242,11 +294,11 @@ impl ShaderState {
         self.depth_texture = texture::Texture::create_depth_texture(
             &self.device,
             &self.sc_desc,
-            "depth_texture",
-            None
+            "depth_texture"
         );
 
-        self.shadowmap.resize(&self.device, &self.sc_desc);
+        // 簡単のため、影については画面サイズ変更の影響を受けないものとする。
+        // self.shadow_texture = texture::Texture::create_shadow_texture(&self.device, &self.sc_desc);
     }
 
     pub fn input(&mut self, event: &WindowEvent) -> bool {
@@ -325,10 +377,20 @@ impl ShaderState {
             }
         );
 
+        for r_light in self.light_book.iter() {
+            let light = r_light.borrow_mut();
+            light.shadow.render_to_texture(
+                &mut encoder,
+                &self.model_instance_group_book,
+            );
+        }
+
+        /*
         self.shadowmap.render_to_texture(
             &mut encoder,
             &self.instance_setting,
         );
+        */
 
         // borrow encoder as &mut
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -364,16 +426,14 @@ impl ShaderState {
 
         render_pass.set_pipeline(&self.light_render_pipeline);
         render_pass.draw_model_instance_groups(
-            &self.light_instance_setting,
+            &self.light_instance_group_book,
             &self.uniform_setting.bind_group,
-            // &self.light_setting.bind_group,
         );
 
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.draw_model_instance_groups(
-            &self.instance_setting,
+            &self.model_instance_group_book,
             &self.uniform_setting.bind_group,
-            // &self.light_setting.bind_group,
         );
         // borrow end
         drop(render_pass);

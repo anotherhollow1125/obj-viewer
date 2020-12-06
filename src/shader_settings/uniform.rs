@@ -1,8 +1,9 @@
 use cgmath::prelude::*;
 use wgpu::util::DeviceExt;
 use crate::shader_settings::camera::{Camera, Projection};
-// use crate::shader_settings::texture;
-use crate::shader_settings::shadowmap;
+use crate::shader_settings::light::Light;
+use crate::shader_settings::texture;
+// use crate::shader_settings::shadowmap;
 
 // uniformの設定
 #[repr(C)]
@@ -43,11 +44,16 @@ pub struct UniformSetting {
 impl UniformSetting {
     pub fn new(
         device: &wgpu::Device,
-        light_num: u32,
+        // light_num: u32,
+        lights: &[&Light],
         light_buffer: &wgpu::Buffer,
+        shadow_uniform_buffer: &wgpu::Buffer,
+        shadow_texture: &texture::Texture,
         // shadow_texture: &texture::Texture,
-        shadowmap: &shadowmap::ShadowMap,
+        // shadowmap: &shadowmap::ShadowMap,
+        // shadowmaps: &[&shadowmap::ShadowMap],
     ) -> Self {
+        let light_num = lights.len() as u32;
         let uniforms = Uniforms::new(light_num);
 
         let buffer = device.create_buffer_init(
@@ -82,9 +88,10 @@ impl UniformSetting {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
-                        visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::UniformBuffer {
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::StorageBuffer {
                             dynamic: false,
+                            readonly: false,
                             min_binding_size: None,
                         },
                         count: None,
@@ -94,8 +101,8 @@ impl UniformSetting {
                         visibility: wgpu::ShaderStage::FRAGMENT,
                         ty: wgpu::BindingType::SampledTexture {
                             multisampled: false,
-                            dimension: wgpu::TextureViewDimension::D2,
-                            component_type: wgpu::TextureComponentType::Uint,
+                            component_type: wgpu::TextureComponentType::Float,
+                            dimension: wgpu::TextureViewDimension::D2Array,
                         },
                         count: None,
                     },
@@ -126,15 +133,15 @@ impl UniformSetting {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::Buffer(shadowmap.uniform_buffer.slice(..)),
+                        resource: wgpu::BindingResource::Buffer(shadow_uniform_buffer.slice(..)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: wgpu::BindingResource::TextureView(&shadowmap.texture.view),
+                        resource: wgpu::BindingResource::TextureView(&shadow_texture.view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 4,
-                        resource: wgpu::BindingResource::Sampler(&shadowmap.texture.sampler),
+                        resource: wgpu::BindingResource::Sampler(&shadow_texture.sampler),
                     },
                 ],
                 label: Some("uniform_bind_group"),

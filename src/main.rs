@@ -2,6 +2,8 @@ use obj_viewer::shader_settings::{
     model,
     light,
     ShaderState,
+    shadowmap,
+    camera,
 };
 use model::*;
 use light::*;
@@ -22,6 +24,7 @@ fn main() -> Result<()> {
     env_logger::init();
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
+        .with_title("Obj File Viewer: Snow theme.")
         .build(&event_loop)
         .unwrap();
 
@@ -76,9 +79,36 @@ fn main() -> Result<()> {
                         * old_position;
                     s.light_buffer.update_light(&s.queue, &main_light);
 
+                    let pos = main_light.position;
+                    main_light.shadow.update(
+                        Some(pos),
+                        None,
+                        &s.queue,
+                        &mut s.shadow_uniform_buffer,
+                    );
+
+                    drop(main_light);
+
+                    let mut sub_light = s.light_book[2].borrow_mut();
+                    let old_position = sub_light.position;
+                    sub_light.position =
+                        cgmath::Quaternion::from_axis_angle((0.0, 1.0, 0.0).into(), cgmath::Deg(0.1))
+                        * old_position;
+                    s.light_buffer.update_light(&s.queue, &sub_light);
+
+                    let pos = sub_light.position;
+                    sub_light.shadow.update(
+                        Some(pos),
+                        None,
+                        &s.queue,
+                        &mut s.shadow_uniform_buffer,
+                    );
+
+                    /*
                     s.shadowmap.position = cgmath::Point3::from_vec(main_light.position);
                     s.shadowmap.direction = -main_light.position.normalize();
                     s.shadowmap.update_view_proj(&s.queue);
+                    */
 
                     Ok(())
                 }).unwrap();
@@ -97,24 +127,83 @@ fn main() -> Result<()> {
 fn prepare_objects(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    layout: &wgpu::BindGroupLayout
+    sc_desc: &wgpu::SwapChainDescriptor,
+    texture_layout: &wgpu::BindGroupLayout,
+    instance_layout: &wgpu::BindGroupLayout,
+    shadow_texture: &wgpu::Texture,
 ) -> Result<(Vec<Instance>, Vec<Light>, Vec<Instance>)>
 {
+    use shadowmap::DirUpdateWay;
+    use camera::Projection;
+
+    let pos1 = (-5.0, 10.0, 5.0);
+    let pos2 = (0.0, 2.1, 1.2);
+
+    let shadow_1 = shadowmap::ShadowMap::new(
+        0,
+        pos1.into(),
+        (0.0, 0.0, 0.0).into(), // don't use
+        0.5,
+        DirUpdateWay::SunLight {
+            anchor_pos: (0.0, 0.0, 0.0).into(),
+        },
+        Projection::new(sc_desc.width, sc_desc.height, cgmath::Deg(45.0), 0.1, 100.0),
+        device,
+        queue,
+        sc_desc,
+        instance_layout,
+        shadow_texture,
+    );
+
+    let spot_light_dir = (0.0, -1.0, 0.0);
+    let shadow_2 = shadowmap::ShadowMap::new(
+        1,
+        pos2.into(),
+        spot_light_dir.into(),
+        0.0,
+        DirUpdateWay::SpotLight,
+        Projection::new(sc_desc.width, sc_desc.height, cgmath::Deg(120.0), 0.1, 100.0),
+        device,
+        queue,
+        sc_desc,
+        instance_layout,
+        shadow_texture,
+    );
+
+    let pos3 = (-5.0, 10.0, -5.0);
+    let shadow_3 = shadowmap::ShadowMap::new(
+        2,
+        pos3.into(),
+        (0.0, 0.0, 0.0).into(), // don't use
+        0.5,
+        DirUpdateWay::SunLight {
+            anchor_pos: (0.0, 0.0, 0.0).into(),
+        },
+        Projection::new(sc_desc.width, sc_desc.height, cgmath::Deg(45.0), 0.1, 100.0),
+        device,
+        queue,
+        sc_desc,
+        instance_layout,
+        shadow_texture,
+    );
+
     let lights = vec![
-        Light::new(0, (-5.0, 10.0, 5.0).into(), (1.0, 1.0, 1.0).into(), 0.4, 1.0),
+        Light::new(0, pos1.into(), (1.0, 1.0, 1.0).into(), 0.4, 1.0, shadow_1),
         Light::new_spotlight(
-            1, (0.0, 2.1, 1.2).into(), (1.0, 1.0, 0.0).into(),
+            1, pos2.into(), (1.0, 1.0, 0.0).into(),
             1.0, // intensity
             0.42,
             0.99, // inner
-            0.9, // outer
-            (0.0, -1.0, 0.0).into()
+            0.85, // outer
+            spot_light_dir.into(),
+            shadow_2
         ),
+        Light::new(2, pos3.into(), (0.0, 0.0, 1.0).into(), 0.4, 1.0, shadow_3),
     ];
 
     let assets_dir = std::path::Path::new(env!("OUT_DIR")).join("assets");
     let house2 = Model::load(
-        0, device, queue, layout,
+        0, device, queue, texture_layout,
         assets_dir.join("house2.obj"),
     )?;
     let house2 = Rc::new(house2);
@@ -131,7 +220,7 @@ fn prepare_objects(
     );
 
     let bulb = Model::load(
-        1, device, queue, layout,
+        1, device, queue, texture_layout,
         assets_dir.join("bulb.obj"),
     )?;
     let bulb = Rc::new(bulb);
