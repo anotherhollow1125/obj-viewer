@@ -34,7 +34,7 @@ pub struct ShaderState {
     depth_texture: Texture,
     // shadow_texture: Texture,
 
-    camera_setting: CameraSetting,
+    pub camera_setting: CameraSetting,
 
     pub shadow_uniform_buffer: shadowmap::ShadowUniformBuffer,
     uniform_setting: UniformSetting,
